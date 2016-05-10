@@ -1,0 +1,278 @@
+#!/usr/bin/python
+
+import socket
+import struct
+import sys
+from thread import *
+import urllib, urllib2, json
+import math
+import collections
+import threading
+
+
+# IP address of DNS Server
+
+global j
+
+host = ''
+
+
+# Checking if appropriate arguments are provided on the command line
+
+if len(sys.argv)!=5:
+
+        print "Please provide the informtion in following format:"
+        print "./dnsserver -p <port> -n <name>"
+
+        sys.exit()
+
+
+# To check if valid port number is provided on the command line
+
+if len(sys.argv)!=5:
+
+        print "Please provide the informtion in following format:"
+        print "./dnsserver -p <port> -n <name>"
+
+        sys.exit()
+
+
+# To check if valid port number is provided on the command line 
+
+if len(sys.argv)!=5:
+
+        print "Please provide the informtion in following format:"
+        print "./dnsserver -p <port> -n <name>"
+
+        sys.exit()
+
+
+# To check if valid port number is provided on the command line 
+
+if sys.argv[1]=='-p':
+        try:
+                port1=int(sys.argv[2])
+
+
+# Check the valid range of port number
+
+                if port1>= 40000 and port1<65536:
+                        port=port1
+
+                else:
+                        print "Port Number not in the range of 40000 and 65535"
+        except ValueError:
+
+                print "Please Provide a Valid Port Number"
+                sys.exit()
+
+
+# Function to Build the DNS Respone Header Section
+#Identification number extracted from received query
+#The flags value is calculated as follows:
+#QR 1 Indicates Respose
+#OPCODE 0 Indicating standard query
+#TC 0 Indicates that the message is not truncated
+#RD 1 Indicates Recursion requested
+#RA 1 Server provides recursion function
+#Z 0  Reserved for future use
+#RCODE 0 Considered only for response message
+
+def Q_Header(identification):
+
+        flags= 0x8180
+        QDCount=0x0001
+ 	ANCOUNT=0x0001
+        NSCOUNT=0
+        ARCOUNT=0
+        Header_Section = struct.pack('!HHHHHH', identification, flags, QDCount, ANCOUNT, NSCOUNT, ARCOUNT)
+        return Header_Section
+
+# Function to Retrieve the DNS Question Section from the received DNS Query
+
+def Q_Question(dns_query):
+
+        i=12
+        i1=ord(dns_query[i])
+        q_name=list()
+
+
+#Extracting the hostname provided in the query
+
+        while i1!=0:
+                ir1=i+1
+ 		ir=i+1+i1
+                i2=dns_query[ir1:ir]
+                q_name.append(i2)
+                i=i+1+i1
+                i1=ord(dns_query[i])
+
+        query_name1=''
+
+        for val in q_name:
+
+                query_name1+=val+'.'
+
+        query_name2=query_name1[:-1]
+
+        Question_Section=dns_query[12:i+5]
+
+        return Question_Section,query_name2
+
+# Function to Build the DNS Answer Section
+
+def Q_Answer(dns_query,j):
+
+        pointer=0xC00C
+        q_type=0x0001
+        q_class=0x0001
+        ttl=5
+        RDlength=4
+        ip_web=j
+        web_ip=socket.inet_aton(ip_web)
+        Answer_Section = struct.pack('!HHHLH4s', pointer, q_type, q_class, ttl, RDlength, web_ip)
+
+        return Answer_Section
+
+# Function to find the best replica server
+
+def find(client_ip):
+
+#Defining a ordered dictionary
+
+        lat_long = collections.OrderedDict()
+
+#Putting latitude and longitude values of replica servers in the dictionary
+
+ 	lat_long['N.Virginia'] = [-77.4875, 39.0437]
+        lat_long['Ireland'] = [-6.2489, 53.3331]
+        lat_long['Oregon'] = [-119.7006, 45.8399]
+        lat_long['N.California'] = [-121.895, 37.3394]
+        lat_long['Frankfrut'] = [8.6833, 50.1167]
+        lat_long['Tokyo'] = [139.7514, 35.685]
+        lat_long['Singapore'] = [103.8558, 1.2931]
+        lat_long['Sydney'] = [151.2082, -33.8666]
+        lat_long['Sao_Paulo'] = [-46.6361, -23.5475]
+
+#A list of server IP addresses
+
+        servers=['52.0.73.113','52.16.219.28','52.11.8.29','52.8.12.101','52.28.48.84','52.68.12.77',
+	        '52.74.143.5','52.64.63.125','54.94.214.108']
+
+#Getting the client machine location in terms of latitude nad longitude
+
+        key='d681cbf298b459b62d2313e03b1333355f38ebb46e5f742896b144b4c385802f'
+        get_lat_long='http://api.ipinfodb.com/v3/ip-city/?key=' + key + '&ip=' + client_ip
+        get_location = urllib2.urlopen(get_lat_long)
+        location_parameters=get_location.read()
+        local_para=location_parameters.split(';')
+        cli_latitude=float(local_para[8])
+        cli_longitude=float(local_para[9])
+
+        d1=list()
+        for value2 in lat_long:
+                f=lat_long[value2]
+                
+#0.0174532925199 = math.pi/180.0, required to convert the longitude and latitude values from degrees to radians
+
+#Latitiude Calculation        
+
+                lat_serv = (90.0 - f[1])*0.0174532925199
+                lat_cli = (90.0 - cli_latitude)*0.0174532925199
+
+#Longitude Calculation        
+
+                long_serv = f[0]*0.0174532925199
+                long_cli = cli_longitude*0.0174532925199
+
+#Implementing Haversine Fromula to calculate arc length between the replica servers and the client
+
+                have_form = (math.sin(lat_serv)*math.sin(lat_cli)*math.cos(long_serv - long_cli) +
+                             math.cos(lat_serv)*math.cos(lat_cli))
+
+# Arc lenght calculatuon
+
+                arc_length = math.acos(have_form)
+
+# Multiplying acr length with radius of the earth which is 3959 miles to get the distance between the replica servers and the client in 
+#miles
+                dis_diff=arc_length*3959
+                d1.append(dis_diff)
+
+#Getting the replica server's IP address which is closest to the client
+
+        j1=d1.index(min(d1))
+        j=servers[j1]
+ 	
+        return j
+
+def final(recv_data):
+
+        global s
+        while True:
+
+# receiving the DNS Query
+
+                #recv_data=s.recvfrom(33333)
+
+                dns_query = recv_data[0]
+
+        #Unpacking the received DNS Query, Header section
+
+                header = struct.unpack('!HHHHHH',dns_query[:12])
+
+
+#Retrieving the Identification Number
+
+ 		identification = header[0]
+                take_ip=recv_data[1]
+                client_ip=take_ip[0]
+                
+                y=find(client_ip)
+                head_sec = Q_Header(identification)
+                ques_sec, q_name1 =Q_Question(dns_query)
+                ans_sec=Q_Answer(dns_query,y)
+
+
+#Checking if the <name> field on the command line and hostname of the dns query are same or not
+
+                if q_name1!=sys.argv[4]:
+
+                        print "IP address of requested domain is not available"
+                        sys.exit()
+                else:
+
+#Sending the DNS response packet to the client
+
+			packet=head_sec+ques_sec+ans_sec
+                        s.sendto(packet,recv_data[1])
+
+#Main Function
+
+def Main():
+        global s
+
+#Creating a socket
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+#Binding the socket to the port defined on the command line
+
+        s.bind((host,port))
+
+#Receiving requests from client
+
+        while True:
+
+                recv_data=s.recvfrom(33333)
+
+#For each request a new thread i created
+
+                t=threading.Thread(target=final,args=(recv_data,))
+           
+                t.start()
+
+#Calling the Main Function
+
+if __name__=='__main__':
+        Main()

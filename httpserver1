@@ -1,0 +1,441 @@
+#!/usr/bin/python
+
+# Import all necessary files from libraries
+
+from SimpleHTTPServer import SimpleHTTPRequestHandler
+from SocketServer import ThreadingMixIn
+from BaseHTTPServer import HTTPServer
+from collections import deque 
+import SocketServer
+import subprocess
+import threading
+import argparse
+import httplib
+import socket
+import atexit
+import sys
+import os
+
+
+# Declare source ip as global 
+
+global src_ip_add
+
+
+# Find source IP address
+
+p = subprocess.Popen(['ifconfig'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+out,err = p.communicate()
+src_ip_add=(((out.split("\n"))[1].split(":"))[1].split(" "))[0]
+
+
+# Set maximum size of cache
+
+limit_c = 10*1024*1024
+
+
+# Define class to create and handle threads 
+
+class Create_Th(ThreadingMixIn, HTTPServer):
+	
+	pass
+
+
+
+# Define class to Handle cache
+
+class Handle_cache:
+	
+
+# Initialize data members for class objects
+
+	def __init__(self, limit_c):
+
+	        self.limit_c = limit_c
+	        self.data_in_c = deque()
+	        self.free_c = self.limit_c
+
+
+# Make directory for cache and set limit to cache 
+
+	def start(self):
+        
+		self.data_in_c = deque()
+	        self.free_c = self.limit_c
+	        dir_r = os.getcwd()
+	        name_c = dir_r + '/wiki/'
+	
+	        if os.path.isdir(name_c) == False:
+	        	return
+
+	        self._start_boot(name_c)
+	        self.free_c
+	
+
+# Check for path in cache and check available cache
+
+	def _start_boot(self, path):
+
+		for current in os.listdir(path):
+
+	        	ext_current = path + current
+
+	        	if os.path.isdir(ext_current):
+
+	        		self._start_boot(ext_current + '/')
+	
+	        	elif os.path.isfile(ext_current):
+
+			# Get size of latest file
+
+	        	    	data_amount = os.path.getsize(ext_current)
+	
+	        	# Make room for file, if not
+ 
+			        if self.free_c < data_amount:
+	        	      		os.remove(ext_current)
+	        	        else:
+	        	            	self.data_in_c.append((ext_current, data_amount))
+	        	        	self.free_c -= data_amount
+		
+	
+# Append latest file in cache 
+
+	def append_latest_data(self, new_ext_current, data_to_upload):
+
+	        size_data = len(data_to_upload)
+        
+	        if self._create_space(size_data) == True:
+         
+	        	update_data = self._write_data(new_ext_current, data_to_upload)
+            
+	# Check if updation of cache is successful or not
+
+		if update_data == True:
+               
+                	self.data_in_c.append((new_ext_current, size_data))
+           
+                	self.free_c -= size_data
+                
+			return True
+
+        	return False
+
+  
+# Refresh cache ; remove or add path in cache memory
+
+	def refresh_c(self, path):
+       
+		result = self._search_c(path)
+        	
+		if result:
+	        
+			try:
+                		self.data_in_c.remove(result)
+
+            		except ValueError, msg:
+
+                		return False
+
+		if result != None:
+            		
+			if os.path.exists(result[0]):
+
+                		self.data_in_c.append(result)
+                		return True
+
+        		return False
+
+
+# Search for a path in cache and return path ; None if path not in cache 
+  
+
+    	def _search_c(self, path):
+        	
+		for tar in self.data_in_c:
+
+        		if path == tar[0]:
+                		return tar
+
+       		return None
+
+   
+# Check size of latest file and free cache 
+
+    	def _create_space(self, size_data):
+        	
+		if size_data > self.limit_c:
+			
+			print "\nThe requested size of file is more than maximum size of cache"
+        		return False
+
+        	else:
+
+	# Remove least cached data to make space for incoming data
+
+            		while self.free_c <= self.limit_c and\
+                		self.free_c < size_data:
+                		file_result = self.data_in_c.popleft()
+                		self._delete_c(file_result[0])
+                		self.free_c += file_result[1]
+            		
+			if self.free_c <= self.limit_c and\
+                		self.free_c >= size_data:
+                		return True
+            		else:
+                		return False
+
+    
+# Make directory and write data in directory
+
+    	def _write_data(self, path, data):
+        	
+		try:
+        		base_d = os.path.dirname(path)
+            		os.makedirs(base_d)
+        
+		except OSError, msg:
+            		print msg
+
+	# Write data in file with path name
+
+        	try:
+            		f = open(path, 'w')
+            		f.write(data)
+            		f.close()
+
+        	except IOError, msg:
+
+            		return False
+        	return True
+  
+
+# Delete path from cache memory
+
+    	def _delete_c(self, path):
+
+        	try:
+            		os.remove(path)
+        	except IOError, msg:
+			pass
+
+
+# Define class to handle HTTP Requests
+
+class Han_H(SimpleHTTPRequestHandler):
+
+
+# Create a object of class Handle_cache
+
+	database = Handle_cache(limit_c)
+
+
+# GET function to fetch a page
+
+   	def do_GET(self):
+        	
+		path = self.translate_path(self.path)
+        	
+		if os.path.isdir(path):
+			
+			self._redirect(path)
+            		return
+        	
+	# Check cache; redirect to cache if in cache, else redirect to origin server
+
+		cache_update_result = Han_H.database.refresh_c(path)
+        
+		if cache_update_result == True:
+            
+            		self._redirect_c(path)
+        	else:
+            		self._redirect(path)
+
+
+# Redirect path to fetch from cache
+
+    	def _redirect_c(self, path):
+        	
+		ctype = self.guess_type(path)
+        
+		try:
+        		f = open(path, 'rb')
+        
+		except IOError, msg:
+            	
+            		self._gen_not_found()
+            		return
+
+	# Send header response and copyfile
+
+        	self.send_response(200)
+        	self.send_header("Content-type", ctype)
+        	fs = os.fstat(f.fileno())
+        	self.send_header("Content-Length", str(fs[6]))
+        	self.send_header("Last-Modified", self.date_time_string(fs.st_mtime))
+        	self.end_headers()
+        	self.copyfile(f, self.wfile)
+        	f.close()
+
+
+# Redirect to origin server
+
+    	def _redirect(self, path):
+
+        	response = self._redirect_org()
+
+	# Check response of GET done to origin server
+        
+		if response is None:
+
+		# Print Error: 404 if page not found
+
+	        	self._gen_not_found()
+
+            		return
+        
+		status = response.status
+		
+	# Check for status response of GET to origin server
+        
+		if status == 200:
+            
+            		self._write_data_in_cache(path, response.read())
+            		self._redirect_c(path)
+
+        	else:
+          
+            		self.send_response(response.status, response.msg)
+            
+			for head in response.getheaders():
+
+                		self.send_header(head[0], head[1])
+            		
+			self.end_headers()
+
+
+# Generate Error: 404 ; File not found
+
+    	def _gen_not_found(self):
+
+        	self.send_error(404, 'File not found')
+
+
+# Function to do GET to origin server
+
+    	def _redirect_org(self):
+
+		host_org = 'ec2-52-4-98-110.compute-1.amazonaws.com'
+        	path_to_fetch = 'http://ec2-52-4-98-110.compute-1.amazonaws.com:8080'+self.path
+
+        	try:
+        		establish = httplib.HTTPConnection(host_org, 8080)
+        	   	establish.request('GET', path_to_fetch)
+            		reply = establish.getresponse()
+            		return reply
+        
+		except BaseException, msg:
+
+            		return None
+
+
+# Add data to cache
+
+   	def _write_data_in_cache(self, path, response):
+        	
+		return Han_H.database.append_latest_data(path, response)
+
+
+
+# Define class for HTTP Server
+
+class Ser_H:
+
+
+# Intialize members to object of class
+
+    def __init__(self, port):
+
+	self.host = src_ip_add
+        self.port = port
+        self.http_serv_handler = Han_H
+	self.httpd = Create_Th((self.host, self.port),self.http_serv_handler)
+        self.load_cache()
+
+
+# Start HTTP Server
+
+    def run(self):
+
+        self.httpd.serve_forever()
+
+
+# Stop HTTP Server
+
+    def end(self):
+ 
+        self.httpd.server_close()
+    
+
+# Load cache to Cache database 
+
+    def load_cache(self):
+
+        Han_H.database.start()
+
+
+# Function to remove arguments 
+
+def remove_args(args_ser_H):
+
+    args_ser_H.end()
+
+
+
+# Check for validity of arguments passed on command line
+
+def check_validity_args():
+    
+
+	if sys.argv[1] != '-p' and sys.argv[3] != '-o' and len(sys.argv) != 5:							
+	
+		print("\nError: Arguments are not passed correctly")
+		sys.exit()
+
+
+# Store port number and check if it's in range
+
+	p_num=int(sys.argv[2])
+
+	if p_num not in range (40000, 65536):
+				
+		print("\nError: Port number should be in range: 40000 to 65535")
+		sys.exit()
+
+
+# Check if origin server is properly specified
+
+	desg_sname = sys.argv[4]
+
+	if desg_sname != "ec2-52-4-98-110.compute-1.amazonaws.com":
+	
+		print("\nError: Origin server name does not match")
+		sys.exit()
+
+	return p_num
+
+
+# Defined main function to call other functions
+
+def main():
+
+    args=check_validity_args()
+    args_ser_H = Ser_H(args)
+    atexit.register(remove_args, args_ser_H)
+    args_ser_H.run()
+
+
+# Call main function
+
+if __name__ == '__main__':
+    main()

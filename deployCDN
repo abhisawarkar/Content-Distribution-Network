@@ -1,0 +1,57 @@
+
+#!/bin/bash
+
+# Names of HTTP Replica Server Hosts
+
+hostname_HTTP=(ec2-52-0-73-113.compute-1.amazonaws.com
+                ec2-52-16-219-28.eu-west-1.compute.amazonaws.com
+                ec2-52-11-8-29.us-west-2.compute.amazonaws.com
+                ec2-52-8-12-101.us-west-1.compute.amazonaws.com
+                ec2-52-28-48-84.eu-central-1.compute.amazonaws.com
+                ec2-52-68-12-77.ap-northeast-1.compute.amazonaws.com
+                ec2-52-74-143-5.ap-southeast-1.compute.amazonaws.com
+                ec2-52-64-63-125.ap-southeast-2.compute.amazonaws.com
+                ec2-54-94-214-108.sa-east-1.compute.amazonaws.com)
+
+# DNS Hostname
+
+hostname_DNS=cs5700cdnproject.ccs.neu.edu
+
+
+# Use shift in while loop to parse command line arguments
+
+while [ $# -gt 0 ]
+do
+    case $1 in
+        --origin | -o)
+            shift; orgn=$1;;
+        --name | -n)
+            shift; name=$1;;
+        --port | -p)
+            shift; prt=$1;;
+        --username | -u)
+            shift; u_name=$1;;
+        --identity | -i)
+            shift; private_key=$1;;
+        *)
+            usage;;
+    esac
+    shift
+done
+
+
+# Deploy DNS Server
+
+scp -i $private_key dnsserver $u_name@$hostname_DNS:~
+ssh -i $private_key $u_name@$hostname_DNS "chmod +x dnsserver >/dev/null 2>&1 &"
+
+
+# Deploy all HTTP Replica Servers  
+
+for data in ${hostname_HTTP[@]};
+do
+    scp -i $private_key httpserver $u_name@$data:~
+    ssh -i $private_key $u_name@$data "chmod +x httpserver >/dev/null 2>&1 &" 
+done
+
+
